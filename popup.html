@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 400px;
+      padding: 10px;
+      font-family: Arial, sans-serif;
+    }
+    
+    /* Switch toggle styles */
+    .switch-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding: 15px;
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .switch-label {
+      font-weight: bold;
+      color: #333;
+    }
+    
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: #ff0000;
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    
+    .switch-status {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    
+    .switch-status.active {
+      color: #28a745;
+    }
+    
+    .switch-status.inactive {
+      color: #dc3545;
+    }
+    
+    #keywordList {
+      width: 100%;
+      height: 100px;
+      margin: 10px 0;
+    }
+    button {
+      width: 100%;
+      padding: 8px;
+      background-color: #ff0000;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background-color: #cc0000;
+    }
+    .stats {
+      margin: 10px 0;
+      padding: 10px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+    }
+    .hidden-videos {
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 10px;
+    }
+    .video-item {
+      display: flex;
+      padding: 10px;
+      border-bottom: 1px solid #ddd;
+      cursor: pointer;
+      align-items: center;
+      gap: 10px;
+    }
+    .video-item:hover {
+      background-color: #f0f0f0;
+    }
+    .video-thumbnail {
+      width: 120px;
+      height: 68px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+    .video-info {
+      flex: 1;
+      overflow: hidden;
+    }
+    .video-title {
+      font-weight: bold;
+      margin-bottom: 5px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .video-date {
+      font-size: 12px;
+      color: #666;
+    }
+    .tabs {
+      display: flex;
+      margin-bottom: 10px;
+    }
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      border: 1px solid #ddd;
+      border-radius: 4px 4px 0 0;
+      margin-right: 5px;
+      background-color: #fff;
+      color: #000;
+    }
+    .tab.active {
+      background-color: #ff0000;
+      color: white;
+      border-color: #ff0000;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .video-age-select {
+      width: 100%;
+      padding: 8px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: white;
+    }
+    .stats-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .stats-tab-btn {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #ddd;
+      background-color: #fff;
+      color: #000;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+      font-weight: bold;
+      margin-right: 5px;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .stats-tab-btn.active {
+      background-color: #ff0000;
+      color: #fff;
+      border-color: #ff0000;
+    }
+    .stats-tab-content {
+      display: none;
+    }
+    .stats-tab-content.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!-- Switch para ligar/desligar a extensão -->
+  <div class="switch-container">
+    <div>
+      <div class="switch-label">Status da Extensão</div>
+      <div id="switchStatus" class="switch-status">Carregando...</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="extensionToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="keywords">Palavras-chave</div>
+    <div class="tab" data-tab="stats">Estatísticas</div>
+  </div>
+
+  <div id="keywords-tab" class="tab-content active">
+    <h3>Palavras-chave para ocultar</h3>
+    <p>Digite uma palavra por linha:</p>
+    <textarea id="keywordList" placeholder="Exemplo:&#10;esquerda&#10;playstation&#10;godot"></textarea>
+    
+    <h3>Ocultar vídeos por idade</h3>
+    <p>Ocultar vídeos mais antigos que:</p>
+    <select id="videoAge" class="video-age-select">
+      <option value="0">Não ocultar por idade</option>
+      <option value="1">1 ano</option>
+      <option value="2">2 anos</option>
+      <option value="3">3 anos</option>
+      <option value="5">5 anos</option>
+      <option value="10">10 anos</option>
+    </select>
+    <br>
+    <label><input type="checkbox" id="hideWatched"> Ocultar vídeos já assistidos (com barra de progresso)</label>
+    
+    <div style="margin-top: 20px;">
+      <button id="saveButton">Salvar</button>
+    </div>
+  </div>
+
+  <div id="stats-tab" class="tab-content">
+    <div class="stats">
+      <h3>Estatísticas</h3>
+      <p>Total de vídeos ocultos: <span id="totalHidden">0</span></p>
+    </div>
+    <div class="hidden-videos">
+      <div class="stats-tabs">
+        <button class="stats-tab-btn active" data-stats-tab="keyword">Palavra-chave</button>
+        <button class="stats-tab-btn" data-stats-tab="date">Data de lançamento</button>
+        <button class="stats-tab-btn" data-stats-tab="watched">Assistido</button>
+      </div>
+      <div id="hiddenVideosList-keyword" class="hiddenVideosList stats-tab-content active"></div>
+      <div id="hiddenVideosList-date" class="hiddenVideosList stats-tab-content"></div>
+      <div id="hiddenVideosList-watched" class="hiddenVideosList stats-tab-content"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html> 

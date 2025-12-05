@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "YT Smart Filter",
+  "version": "1.0",
+  "description": "Filtra vídeos do YT por palavras-chave, idade e status de visualização",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["*://*.youtube.com/*", "*://*.ytimg.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icons/icon.svg"
+  },
+  "icons": {
+    "128": "icons/icon.svg"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*"],
+      "matches": ["*://*.youtube.com/*"]
+    }
+  ]
+} 
