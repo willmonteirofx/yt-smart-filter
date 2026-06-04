@@ -41,4 +41,21 @@ chrome.storage.sync.get(['extensionEnabled'], function(result) {
     const count = result.hiddenVideos ? result.hiddenVideos.length : 0;
     updateBadge(count, isEnabled);
   });
+});
+
+// Inicializar configurações padrão ao instalar ou atualizar
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.sync.get(['videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'extensionEnabled'], function(result) {
+    const updates = {};
+    if (typeof result.videoAge === 'undefined') updates.videoAge = '3';
+    if (typeof result.hideWatched === 'undefined') updates.hideWatched = true;
+    if (typeof result.channelLimit === 'undefined') updates.channelLimit = 2;
+    if (typeof result.hidePlaylists === 'undefined') updates.hidePlaylists = true;
+    if (typeof result.enableAltClick === 'undefined') updates.enableAltClick = true;
+    if (typeof result.extensionEnabled === 'undefined') updates.extensionEnabled = true;
+    
+    if (Object.keys(updates).length > 0) {
+      chrome.storage.sync.set(updates);
+    }
+  });
 }); 

@@ -175,10 +175,35 @@
     .video-age-select {
       width: 100%;
       padding: 8px;
-      margin: 10px 0;
+      margin: 0;
       border: 1px solid #ddd;
       border-radius: 4px;
       background-color: white;
+      box-sizing: border-box;
+      height: 36px;
+    }
+    .row-container {
+      display: flex;
+      gap: 12px;
+      margin-top: 15px;
+      margin-bottom: 15px;
+    }
+    .column-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .column-item h3 {
+      font-size: 13px;
+      margin: 0 0 4px 0;
+      white-space: nowrap;
+    }
+    .column-item p {
+      font-size: 11px;
+      color: #666;
+      margin: 0 0 6px 0;
+      line-height: 1.2;
+      min-height: 26px;
     }
     .stats-tabs {
       display: flex;
@@ -232,19 +257,32 @@
     <h3>Palavras-chave para ocultar</h3>
     <p>Digite uma palavra por linha:</p>
     <textarea id="keywordList" placeholder="Exemplo:&#10;esquerda&#10;playstation&#10;godot"></textarea>
+    <div class="row-container">
+      <div class="column-item">
+        <h3>Ocultar por idade</h3>
+        <p>Vídeos mais antigos que:</p>
+        <select id="videoAge" class="video-age-select">
+          <option value="0">Não ocultar</option>
+          <option value="1">1 ano</option>
+          <option value="2">2 anos</option>
+          <option value="3" selected>3 anos</option>
+          <option value="5">5 anos</option>
+          <option value="10">10 anos</option>
+        </select>
+      </div>
+      
+      <div class="column-item">
+        <h3>Limite por canal</h3>
+        <p>Qtd. máx de vídeos (0 desativa):</p>
+        <input type="number" id="channelLimit" class="video-age-select" min="0" value="2">
+      </div>
+    </div>
     
-    <h3>Ocultar vídeos por idade</h3>
-    <p>Ocultar vídeos mais antigos que:</p>
-    <select id="videoAge" class="video-age-select">
-      <option value="0">Não ocultar por idade</option>
-      <option value="1">1 ano</option>
-      <option value="2">2 anos</option>
-      <option value="3">3 anos</option>
-      <option value="5">5 anos</option>
-      <option value="10">10 anos</option>
-    </select>
+    <label><input type="checkbox" id="hideWatched" checked> Ocultar vídeos já assistidos (com barra de progresso)</label>
     <br>
-    <label><input type="checkbox" id="hideWatched"> Ocultar vídeos já assistidos (com barra de progresso)</label>
+    <label><input type="checkbox" id="hidePlaylists" checked> Ocultar Playlists / Coleções de vídeos</label>
+    <br>
+    <label><input type="checkbox" id="enableAltClick" checked> Habilitar Alt+Click para marcar como "Não tenho interesse"</label>
     
     <div style="margin-top: 20px;">
       <button id="saveButton">Salvar</button>
@@ -257,14 +295,18 @@
       <p>Total de vídeos ocultos: <span id="totalHidden">0</span></p>
     </div>
     <div class="hidden-videos">
-      <div class="stats-tabs">
+      <div class="stats-tabs" style="flex-wrap: wrap; gap: 5px;">
         <button class="stats-tab-btn active" data-stats-tab="keyword">Palavra-chave</button>
-        <button class="stats-tab-btn" data-stats-tab="date">Data de lançamento</button>
+        <button class="stats-tab-btn" data-stats-tab="date">Lançamento</button>
         <button class="stats-tab-btn" data-stats-tab="watched">Assistido</button>
+        <button class="stats-tab-btn" data-stats-tab="channelLimit">Limite Canal</button>
+        <button class="stats-tab-btn" data-stats-tab="playlist">Playlist</button>
       </div>
       <div id="hiddenVideosList-keyword" class="hiddenVideosList stats-tab-content active"></div>
       <div id="hiddenVideosList-date" class="hiddenVideosList stats-tab-content"></div>
       <div id="hiddenVideosList-watched" class="hiddenVideosList stats-tab-content"></div>
+      <div id="hiddenVideosList-channelLimit" class="hiddenVideosList stats-tab-content"></div>
+      <div id="hiddenVideosList-playlist" class="hiddenVideosList stats-tab-content"></div>
     </div>
   </div>
 

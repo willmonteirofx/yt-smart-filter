@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const tabContents = document.querySelectorAll('.tab-content');
   const videoAgeSelect = document.getElementById('videoAge');
   const hideWatchedCheckbox = document.getElementById('hideWatched');
+  const enableAltClickCheckbox = document.getElementById('enableAltClick');
   const extensionToggle = document.getElementById('extensionToggle');
   const switchStatus = document.getElementById('switchStatus');
 
@@ -59,16 +60,15 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   // Carregar configurações salvas
-  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'extensionEnabled'], function(result) {
+  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'extensionEnabled'], function(result) {
     if (result.keywords) {
       keywordList.value = result.keywords.join('\n');
     }
-    if (result.videoAge) {
-      videoAgeSelect.value = result.videoAge;
-    }
-    if (typeof result.hideWatched !== 'undefined') {
-      hideWatchedCheckbox.checked = result.hideWatched;
-    }
+    videoAgeSelect.value = typeof result.videoAge !== 'undefined' ? result.videoAge : '3';
+    hideWatchedCheckbox.checked = typeof result.hideWatched !== 'undefined' ? result.hideWatched : true;
+    document.getElementById('channelLimit').value = typeof result.channelLimit !== 'undefined' ? result.channelLimit : 2;
+    document.getElementById('hidePlaylists').checked = typeof result.hidePlaylists !== 'undefined' ? result.hidePlaylists : true;
+    enableAltClickCheckbox.checked = typeof result.enableAltClick !== 'undefined' ? result.enableAltClick : true;
     // Carregar estado da extensão (padrão: ativa)
     const isEnabled = result.extensionEnabled !== false; // true por padrão
     updateSwitchStatus(isEnabled);
@@ -108,11 +108,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     const videoAge = videoAgeSelect.value;
     const hideWatched = hideWatchedCheckbox.checked;
+    const channelLimit = parseInt(document.getElementById('channelLimit').value || '0');
+    const hidePlaylists = document.getElementById('hidePlaylists').checked;
+    const enableAltClick = enableAltClickCheckbox.checked;
 
     chrome.storage.sync.set({ 
       keywords: keywords,
       videoAge: videoAge,
-      hideWatched: hideWatched
+      hideWatched: hideWatched,
+      channelLimit: channelLimit,
+      hidePlaylists: hidePlaylists,
+      enableAltClick: enableAltClick
     }, function() {
       // Notificar a página do YT para atualizar
       chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
@@ -133,11 +139,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const byKeyword = hiddenVideos.filter(v => v.reason === 'keyword');
       const byDate = hiddenVideos.filter(v => v.reason === 'date');
       const byWatched = hiddenVideos.filter(v => v.reason === 'watched');
+      const byChannelLimit = hiddenVideos.filter(v => v.reason === 'channelLimit');
+      const byPlaylist = hiddenVideos.filter(v => v.reason === 'playlist');
 
       // Limpar listas
       document.getElementById('hiddenVideosList-keyword').innerHTML = '';
       document.getElementById('hiddenVideosList-date').innerHTML = '';
       document.getElementById('hiddenVideosList-watched').innerHTML = '';
+      document.getElementById('hiddenVideosList-channelLimit').innerHTML = '';
+      document.getElementById('hiddenVideosList-playlist').innerHTML = '';
 
       // Função para criar elemento de vídeo
       function createVideoElement(video) {
@@ -173,6 +183,12 @@ document.addEventListener('DOMContentLoaded', function() {
       });
       byWatched.forEach(video => {
         document.getElementById('hiddenVideosList-watched').appendChild(createVideoElement(video));
+      });
+      byChannelLimit.forEach(video => {
+        document.getElementById('hiddenVideosList-channelLimit').appendChild(createVideoElement(video));
+      });
+      byPlaylist.forEach(video => {
+        document.getElementById('hiddenVideosList-playlist').appendChild(createVideoElement(video));
       });
     });
   }
