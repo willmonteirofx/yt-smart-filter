@@ -8,6 +8,8 @@ let isExtensionEnabled = true; // Estado da extensão
 let channelLimit = 2; // Limite de vídeos por canal (0 desativado)
 let hidePlaylists = true; // Ocultar playlists / coleções
 let enableAltClick = true; // Habilitar Alt+Click ("Não tenho interesse")
+let hideAdvancedDiscovery = true; // Ocultar seção "Descoberta avançada de novos temas"
+let hideDuplicates = true; // Ocultar cards de vídeos repetidos
 
 // Estado da ordenação
 let sortMostViewedActive = false;
@@ -78,6 +80,13 @@ function showAllVideos() {
     video.style.display = '';
   });
   
+  // Restaurar seção de descoberta avançada
+  document.querySelectorAll('ytd-chips-shelf-with-video-shelf-renderer').forEach(section => {
+    const richSection = section.closest('ytd-rich-section-renderer');
+    const target = richSection || section;
+    target.style.display = '';
+  });
+  
   // Limpar contador de vídeos ocultos
   hiddenVideos.clear();
   updateBadge();
@@ -100,7 +109,7 @@ function loadKeywords() {
 function loadSettings() {
   if (!checkExtensionEnabledContext() || !isExtensionEnabled) return;
   
-  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'sortMostViewedActive', 'sortMostRecentActive'], function(result) {
+  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'sortMostViewedActive', 'sortMostRecentActive', 'hideAdvancedDiscovery', 'hideDuplicates'], function(result) {
     if (!checkExtensionEnabledContext()) return;
     keywords = result.keywords || [];
     maxVideoAge = typeof result.videoAge !== 'undefined' ? parseInt(result.videoAge) : 3;
@@ -108,10 +117,29 @@ function loadSettings() {
     channelLimit = typeof result.channelLimit !== 'undefined' ? parseInt(result.channelLimit) : 2;
     hidePlaylists = typeof result.hidePlaylists !== 'undefined' ? !!result.hidePlaylists : true;
     enableAltClick = typeof result.enableAltClick !== 'undefined' ? !!result.enableAltClick : true;
+    hideAdvancedDiscovery = typeof result.hideAdvancedDiscovery !== 'undefined' ? !!result.hideAdvancedDiscovery : true;
+    hideDuplicates = typeof result.hideDuplicates !== 'undefined' ? !!result.hideDuplicates : true;
     sortMostViewedActive = !!result.sortMostViewedActive;
     sortMostRecentActive = !!result.sortMostRecentActive;
     if (isExtensionEnabled) {
       hideVideos();
+    }
+  });
+}
+
+// Função para ocultar/mostrar a seção "Descoberta avançada de novos temas"
+function applyAdvancedDiscoveryVisibility() {
+  const sections = document.querySelectorAll('ytd-chips-shelf-with-video-shelf-renderer');
+  sections.forEach(section => {
+    // Subir até o ytd-rich-section-renderer pai para ocultar o bloco inteiro
+    const richSection = section.closest('ytd-rich-section-renderer');
+    const target = richSection || section;
+    if (hideAdvancedDiscovery) {
+      target.style.display = 'none';
+    } else {
+      if (target.style.display === 'none') {
+        target.style.display = '';
+      }
     }
   });
 }
@@ -743,16 +771,8 @@ async function processVideo(video, currentChannelCounts) {
       reason = 'watched';
     } else if (hidePlaylists && isPlaylistElement(video)) {
       reason = 'playlist';
-    } else if (channelLimit > 0) {
-      const channelId = getChannelIdentifier(video);
-      if (channelId) {
-        const currentCount = currentChannelCounts.get(channelId) || 0;
-        if (currentCount >= channelLimit) {
-          reason = 'channelLimit';
-        } else {
-          currentChannelCounts.set(channelId, currentCount + 1);
-        }
-      }
+    } else if (channelLimit > 0 && video.dataset.hiddenByChannelLimit === 'true') {
+      reason = 'channelLimit';
     }
 
     if (reason) {
@@ -805,6 +825,9 @@ function findVideoElements() {
 async function hideVideos() {
   if (!checkExtensionContext() || !isExtensionEnabled) return;
   
+  // Aplicar visibilidade da seção de descoberta avançada
+  applyAdvancedDiscoveryVisibility();
+  
   // Tentar injetar os chips de ordenação
   injectFilterChips();
   
@@ -814,9 +837,75 @@ async function hideVideos() {
   // Log para debug
   console.log(`[YT Smart Filter] Encontrados ${videoElements.length} vídeos para processar`);
   
-  // Processar todos os vídeos sequencialmente
+  // --- Lógica de duplicatas ---
+  // Mapear video ID -> lista de elementos (para identificar repetidos)
+  const videoIdToElements = new Map();
+  videoElements.forEach(video => {
+    const linkElement = video.querySelector('a[href*="/watch?v="]');
+    if (!linkElement) return;
+    const vid = getVideoId(linkElement.href);
+    if (!vid) return;
+    if (!videoIdToElements.has(vid)) videoIdToElements.set(vid, []);
+    videoIdToElements.get(vid).push(video);
+  });
+  
+  // Pré-ocultar duplicatas (manter apenas o primeiro de cada ID)
+  if (hideDuplicates) {
+    videoIdToElements.forEach((elements, vid) => {
+      if (elements.length > 1) {
+        // Manter o primeiro visível; ocultar os demais
+        for (let i = 1; i < elements.length; i++) {
+          elements[i].style.display = 'none';
+          elements[i].dataset.hiddenByDuplicate = 'true';
+        }
+      }
+    });
+  } else {
+    // Se a opção foi desligada, restaurar elementos marcados como duplicatas
+    videoElements.forEach(video => {
+      if (video.dataset.hiddenByDuplicate) {
+        video.style.display = '';
+        delete video.dataset.hiddenByDuplicate;
+      }
+    });
+  }
+  
+  // --- Lógica de limite por canal com prioridade para vídeos com menos views ---
+  // Coletar metadados de todos os vídeos por canal antes de processar
+  const channelVideoData = new Map(); // channelId -> [{video, views}]
+  if (channelLimit > 0) {
+    videoElements.forEach(video => {
+      // Pular duplicatas já ocultadas
+      if (video.dataset.hiddenByDuplicate) return;
+      const channelId = getChannelIdentifier(video);
+      if (!channelId) return;
+      const { viewsText } = getVideoMetadata(video);
+      const views = parseViews(viewsText);
+      if (!channelVideoData.has(channelId)) channelVideoData.set(channelId, []);
+      channelVideoData.get(channelId).push({ video, views });
+    });
+    
+    // Para cada canal com mais vídeos que o limite, ocultar os de MENOS views
+    channelVideoData.forEach((items, channelId) => {
+      if (items.length <= channelLimit) return;
+      // Ordenar: maior views primeiro
+      items.sort((a, b) => b.views - a.views);
+      // Ocultar os excedentes (menor views)
+      for (let i = channelLimit; i < items.length; i++) {
+        items[i].video.dataset.hiddenByChannelLimit = 'true';
+      }
+    });
+  } else {
+    // Se limite desativado, limpar marcações anteriores
+    videoElements.forEach(video => {
+      delete video.dataset.hiddenByChannelLimit;
+    });
+  }
+  
+  // Processar todos os vídeos sequencialmente (exceto duplicatas já tratadas)
   const currentChannelCounts = new Map();
   for (const video of videoElements) {
+    if (video.dataset.hiddenByDuplicate) continue; // já oculto
     await processVideo(video, currentChannelCounts);
   }
   

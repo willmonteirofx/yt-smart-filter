@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', function() {
   const videoAgeSelect = document.getElementById('videoAge');
   const hideWatchedCheckbox = document.getElementById('hideWatched');
   const enableAltClickCheckbox = document.getElementById('enableAltClick');
+  const hideAdvancedDiscoveryCheckbox = document.getElementById('hideAdvancedDiscovery');
+  const hideDuplicatesCheckbox = document.getElementById('hideDuplicates');
   const extensionToggle = document.getElementById('extensionToggle');
   const switchStatus = document.getElementById('switchStatus');
 
@@ -60,7 +62,7 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   // Carregar configurações salvas
-  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'extensionEnabled'], function(result) {
+  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'extensionEnabled', 'hideAdvancedDiscovery', 'hideDuplicates'], function(result) {
     if (result.keywords) {
       keywordList.value = result.keywords.join('\n');
     }
@@ -69,6 +71,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('channelLimit').value = typeof result.channelLimit !== 'undefined' ? result.channelLimit : 2;
     document.getElementById('hidePlaylists').checked = typeof result.hidePlaylists !== 'undefined' ? result.hidePlaylists : true;
     enableAltClickCheckbox.checked = typeof result.enableAltClick !== 'undefined' ? result.enableAltClick : true;
+    hideAdvancedDiscoveryCheckbox.checked = typeof result.hideAdvancedDiscovery !== 'undefined' ? result.hideAdvancedDiscovery : true;
+    hideDuplicatesCheckbox.checked = typeof result.hideDuplicates !== 'undefined' ? result.hideDuplicates : true;
     // Carregar estado da extensão (padrão: ativa)
     const isEnabled = result.extensionEnabled !== false; // true por padrão
     updateSwitchStatus(isEnabled);
@@ -111,6 +115,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const channelLimit = parseInt(document.getElementById('channelLimit').value || '0');
     const hidePlaylists = document.getElementById('hidePlaylists').checked;
     const enableAltClick = enableAltClickCheckbox.checked;
+    const hideAdvancedDiscovery = hideAdvancedDiscoveryCheckbox.checked;
+    const hideDuplicates = hideDuplicatesCheckbox.checked;
 
     chrome.storage.sync.set({ 
       keywords: keywords,
@@ -118,7 +124,9 @@ document.addEventListener('DOMContentLoaded', function() {
       hideWatched: hideWatched,
       channelLimit: channelLimit,
       hidePlaylists: hidePlaylists,
-      enableAltClick: enableAltClick
+      enableAltClick: enableAltClick,
+      hideAdvancedDiscovery: hideAdvancedDiscovery,
+      hideDuplicates: hideDuplicates
     }, function() {
       // Notificar a página do YT para atualizar
       chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
