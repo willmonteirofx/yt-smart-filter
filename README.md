@@ -2,9 +2,12 @@
 
 Extensão para Chrome que filtra e oculta vídeos do YT com base em palavras-chave, idade dos vídeos e status de visualização.
 
-![Screenshot 1](Screenshot_1.png)
+<p>
+  <img src="Screenshot_1.png" alt="Popup – Filtros" width="300">
+  <img src="Screenshot_2.png" alt="Popup – Estatísticas" width="300">
+</p>
 
-![Screenshot 2](Screenshot_2.png)
+![Chips Mais vistos / Mais recentes no YouTube](Screenshot_3.png)
 
 ## Funcionalidades
 
@@ -12,6 +15,10 @@ Extensão para Chrome que filtra e oculta vídeos do YT com base em palavras-cha
 - **Filtro por palavras-chave**: Oculta vídeos que contenham palavras específicas no título
 - **Filtro por idade**: Oculta vídeos mais antigos que um número específico de anos
 - **Filtro de assistidos**: Oculta vídeos que já foram assistidos
+- **Ordenação do feed**: Chips "Mais vistos" e "Mais recentes" na barra do YouTube (com os dois ativos, os mais vistos vêm primeiro, do mais recente ao mais antigo)
+- **Limite por canal**: Mostra no máximo N vídeos de cada canal, mantendo os mais vistos
+- **Repetidos e playlists**: Oculta cards de vídeos duplicados e playlists/coleções
+- **Alt+Click**: Marca um vídeo como "Não tenho interesse" com um clique
 - **Estatísticas**: Mostra quantos vídeos foram ocultados e por qual motivo
 
 ## Instalação

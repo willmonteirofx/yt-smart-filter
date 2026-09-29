@@ -10,11 +10,20 @@ let hidePlaylists = true; // Ocultar playlists / coleções
 let enableAltClick = true; // Habilitar Alt+Click ("Não tenho interesse")
 let hideAdvancedDiscovery = true; // Ocultar seção "Descoberta avançada de novos temas"
 let hideDuplicates = true; // Ocultar cards de vídeos repetidos
+let settingsLoaded = false; // Chips só são injetados após ler o estado salvo
 
 // Estado da ordenação
 let sortMostViewedActive = false;
 let sortMostRecentActive = false;
 let injectedChips = [];
+let nextOriginalIndex = 0;
+
+// Cards de vídeo: grid da home/inscrições, busca e a sidebar do /watch (que agora usa yt-lockup-view-model solto)
+const CARD_SELECTOR = 'ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-video-renderer, ytd-item-section-renderer yt-lockup-view-model';
+const TITLE_SELECTOR = '.ytLockupMetadataViewModelTitle, #video-title';
+const LINK_SELECTOR = 'a[href*="/watch?v="], a[href*="list="], a[href*="/playlist?"]';
+const METADATA_TEXT_SELECTOR = '.ytContentMetadataViewModelMetadataRow span.ytAttributedStringHost, .ytContentMetadataViewModelMetadataText, #metadata-line span';
+const WATCHED_SELECTOR = '.ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment, ytd-thumbnail-overlay-resume-playback-renderer';
 
 function areChipsConnected() {
   return injectedChips.length > 0 && injectedChips.every(chip => chip.isConnected);
@@ -31,86 +40,43 @@ function checkExtensionContext() {
   }
 }
 
-// Função para verificar se a extensão está ativa
-function checkExtensionEnabled() {
-  if (!checkExtensionEnabledContext()) return false;
-  
-  chrome.storage.sync.get(['extensionEnabled'], function(result) {
-    isExtensionEnabled = result.extensionEnabled !== false;
-    if (isExtensionEnabled) {
-      // Se foi reativada, executar a ocultação
-      hideVideos();
-    } else {
-      // Se foi desativada, mostrar todos os vídeos
-      showAllVideos();
-    }
-  });
-  
-  return isExtensionEnabled;
-}
-
-// Função auxiliar para evitar recursão ou erros de nomenclatura
-function checkExtensionEnabledContext() {
-  try {
-    chrome.runtime.getURL('');
-    return true;
-  } catch (e) {
-    isExtensionValid = false;
-    return false;
+// Ocultar/mostrar um card marcando que fomos nós que ocultamos
+function setHidden(el, hidden) {
+  if (hidden) {
+    el.style.display = 'none';
+    el.dataset.ytsfHidden = 'true';
+  } else if (el.dataset.ytsfHidden) {
+    el.style.display = '';
+    delete el.dataset.ytsfHidden;
   }
 }
 
 // Função para mostrar todos os vídeos (quando extensão é desativada)
 function showAllVideos() {
-  if (!checkExtensionEnabledContext()) return;
-  
+  if (!checkExtensionContext()) return;
+
   // Restaurar feed para original e remover chips
   sortMostViewedActive = false;
   sortMostRecentActive = false;
   restoreOriginalOrder();
-  
-  const chipsContainer = findChipsContainer();
-  if (chipsContainer) {
-    const ourChips = chipsContainer.querySelectorAll('.yt-smart-filter-chip');
-    ourChips.forEach(chip => chip.remove());
-  }
-  
-  const videoElements = findVideoElements();
-  videoElements.forEach(video => {
-    video.style.display = '';
-  });
-  
-  // Restaurar seção de descoberta avançada
-  document.querySelectorAll('ytd-chips-shelf-with-video-shelf-renderer').forEach(section => {
-    const richSection = section.closest('ytd-rich-section-renderer');
-    const target = richSection || section;
-    target.style.display = '';
-  });
-  
+
+  injectedChips.forEach(chip => chip.remove());
+  injectedChips = [];
+
+  document.querySelectorAll('[data-ytsf-hidden]').forEach(el => setHidden(el, false));
+
   // Limpar contador de vídeos ocultos
   hiddenVideos.clear();
   updateBadge();
 }
 
-// Função para carregar as palavras-chave
-function loadKeywords() {
-  if (!checkExtensionEnabledContext() || !isExtensionEnabled) return;
-  
-  chrome.storage.sync.get(['keywords'], function(result) {
-    if (!checkExtensionEnabledContext()) return;
-    keywords = result.keywords || [];
-    if (isExtensionEnabled) {
-      hideVideos();
-    }
-  });
-}
-
 // Função para carregar as configurações
 function loadSettings() {
-  if (!checkExtensionEnabledContext() || !isExtensionEnabled) return;
-  
-  chrome.storage.sync.get(['keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'sortMostViewedActive', 'sortMostRecentActive', 'hideAdvancedDiscovery', 'hideDuplicates'], function(result) {
-    if (!checkExtensionEnabledContext()) return;
+  if (!checkExtensionContext()) return;
+
+  chrome.storage.sync.get(['extensionEnabled', 'keywords', 'videoAge', 'hideWatched', 'channelLimit', 'hidePlaylists', 'enableAltClick', 'sortMostViewedActive', 'sortMostRecentActive', 'hideAdvancedDiscovery', 'hideDuplicates'], function(result) {
+    if (!checkExtensionContext()) return;
+    isExtensionEnabled = result.extensionEnabled !== false;
     keywords = result.keywords || [];
     maxVideoAge = typeof result.videoAge !== 'undefined' ? parseInt(result.videoAge) : 3;
     hideWatched = typeof result.hideWatched !== 'undefined' ? !!result.hideWatched : true;
@@ -121,8 +87,17 @@ function loadSettings() {
     hideDuplicates = typeof result.hideDuplicates !== 'undefined' ? !!result.hideDuplicates : true;
     sortMostViewedActive = !!result.sortMostViewedActive;
     sortMostRecentActive = !!result.sortMostRecentActive;
+    settingsLoaded = true;
+
     if (isExtensionEnabled) {
+      // Chips já injetados podem estar mostrando um estado antigo
+      if (injectedChips.length === 2) {
+        updateChipUI(injectedChips[0], sortMostViewedActive);
+        updateChipUI(injectedChips[1], sortMostRecentActive);
+      }
       hideVideos();
+    } else {
+      showAllVideos();
     }
   });
 }
@@ -133,31 +108,14 @@ function applyAdvancedDiscoveryVisibility() {
   sections.forEach(section => {
     // Subir até o ytd-rich-section-renderer pai para ocultar o bloco inteiro
     const richSection = section.closest('ytd-rich-section-renderer');
-    const target = richSection || section;
-    if (hideAdvancedDiscovery) {
-      target.style.display = 'none';
-    } else {
-      if (target.style.display === 'none') {
-        target.style.display = '';
-      }
-    }
+    setHidden(richSection || section, hideAdvancedDiscovery);
   });
 }
 
 // Função para verificar se o título do vídeo contém alguma palavra-chave
-function shouldHideVideo(title, ageText) {
-  if (!isExtensionEnabled) return false;
-  
-  // Verificar palavras-chave
-  const hasKeyword = keywords.some(keyword => 
-    title.toLowerCase().includes(keyword.toLowerCase())
-  );
-  
-  // Verificar idade
-  const videoAge = getVideoAge(ageText);
-  const isTooOld = maxVideoAge > 0 && videoAge >= maxVideoAge;
-  
-  return hasKeyword || isTooOld;
+function hasKeyword(title) {
+  const lower = title.toLowerCase();
+  return keywords.some(keyword => lower.includes(keyword.toLowerCase()));
 }
 
 // Função para extrair o ID do vídeo da URL
@@ -172,90 +130,64 @@ function getVideoId(url) {
   }
 }
 
-// Função para extrair a idade do vídeo em anos
-function getVideoAge(ageText) {
-  if (!ageText) return 0;
-  
-  const text = ageText.toLowerCase();
-  if (text.includes('hora') || text.includes('horas')) return 0;
-  if (text.includes('dia') || text.includes('dias')) return 0;
-  if (text.includes('semana') || text.includes('semanas')) return 0;
-  if (text.includes('mês') || text.includes('meses')) return 0;
-  
-  const match = text.match(/(\d+)\s*ano/);
-  if (match) {
-    return parseInt(match[1]);
-  }
-  
-  return 0;
-}
+// Texto de idade: "há 3 dias", "há 22 min.", "há 2 sem.", "Transmitido há 4 h", "3 days ago", "Streamed 1 year ago"
+const AGE_REGEX = /(\d+)\s*(segundos?|seg|minutos?|min|horas?|h|dias?|semanas?|sem|m[êe]s|meses|anos?|seconds?|sec|minutes?|mins?|hours?|hrs?|days?|weeks?|wks?|months?|mo|years?|yrs?)\.?(?![a-zà-ÿ])/i;
 
-// Função para analisar o número de visualizações
-function parseViews(text) {
-  if (!text) return 0;
-  text = text.toLowerCase().replace(/[\u00a0\s]/g, ' '); // normalizar espaços
-  if (text.includes('nenhuma') || text.includes('no views') || text.includes('sem visualiza')) return 0;
-  
-  const match = text.match(/([0-9.,\s]+)/);
-  if (!match) return 0;
-  
-  let numStr = match[1].trim().replace(/\s/g, '').replace(',', '.');
-  let num = parseFloat(numStr);
-  if (isNaN(num)) return 0;
-  
-  if (text.includes('mil') || text.includes('k')) {
-    num *= 1000;
-  } else if (text.includes('mi') || text.includes('m') || text.includes('milhão') || text.includes('milões') || text.includes('milhões')) {
-    num *= 1000000;
-  } else if (text.includes('bi') || text.includes('b') || text.includes('bilhão') || text.includes('bilhões')) {
-    num *= 1000000000;
-  }
-  return num;
+function isAgeText(text) {
+  return /(^|\s)(há|ago|atrás)(\s|$)/i.test(text) && AGE_REGEX.test(text);
 }
 
 // Função para analisar a idade em minutos
 function parseAgeToMinutes(ageText) {
-  if (!ageText) return Infinity;
-  const text = ageText.toLowerCase().trim();
-  
-  const match = text.match(/(\d+)/);
+  const match = (ageText || '').match(AGE_REGEX);
   if (!match) return Infinity;
   const num = parseInt(match[1]);
-  
-  if (text.includes('segundo')) return num / 60;
-  if (text.includes('minuto')) return num;
-  if (text.includes('hora')) return num * 60;
-  if (text.includes('dia')) return num * 1440;
-  if (text.includes('semana')) return num * 10080;
-  if (text.includes('mês') || text.includes('meses') || text.includes('month')) return num * 43200;
-  if (text.includes('ano') || text.includes('year')) return num * 525600;
-  
-  // Inglês
-  if (text.includes('second')) return num / 60;
-  if (text.includes('minute')) return num;
-  if (text.includes('hour')) return num * 60;
-  if (text.includes('day')) return num * 1440;
-  if (text.includes('week')) return num * 10080;
-  
-  return Infinity;
+  const unit = match[2].toLowerCase();
+
+  if (unit.startsWith('seg') || unit.startsWith('sec')) return num / 60;
+  if (unit.startsWith('min')) return num;
+  if (unit === 'h' || unit.startsWith('hora') || unit.startsWith('hour') || unit.startsWith('hr')) return num * 60;
+  if (unit.startsWith('dia') || unit.startsWith('day')) return num * 1440;
+  if (unit.startsWith('sem') || unit.startsWith('w')) return num * 10080;
+  if (unit.startsWith('m')) return num * 43200; // mês, meses, month(s), mo
+  return num * 525600; // ano(s), year(s), yr
+}
+
+// Função para extrair a idade do vídeo em anos
+function getVideoAge(ageText) {
+  const minutes = parseAgeToMinutes(ageText);
+  return minutes === Infinity ? 0 : Math.floor(minutes / 525600);
+}
+
+// Visualizações: "6,4 mil", "1,2 mi de visualizações", "1.234 visualizações", "12 mil assistindo", "1.2M views"
+const VIEWS_REGEX = /^(\d[\d.,]*)\s*(mil|mi|bi|k|m|b)?\.?(\s+(de\s+)?(visualiza\S*|views?|assistindo|watching|esperando|waiting))?$/i;
+
+function isViewsText(text) {
+  const t = text.trim();
+  return VIEWS_REGEX.test(t) && !isAgeText(t);
+}
+
+// Função para analisar o número de visualizações
+function parseViews(text) {
+  const match = (text || '').trim().match(VIEWS_REGEX);
+  if (!match) return 0;
+  const suffix = (match[2] || '').toLowerCase();
+  if (!suffix) return parseInt(match[1].replace(/[.,]/g, '')) || 0;
+  const num = parseFloat(match[1].replace(',', '.')) || 0;
+  if (suffix === 'mil' || suffix === 'k') return num * 1e3;
+  if (suffix === 'mi' || suffix === 'm') return num * 1e6;
+  return num * 1e9;
 }
 
 // Função para obter visualizações e idade de um vídeo
 function getVideoMetadata(video) {
   let viewsText = '';
   let ageText = '';
-  
-  const metadataItems = video.querySelectorAll('.ytContentMetadataViewModelMetadataRow span, .yt-content-metadata-view-model-wiz__metadata-text, #metadata-line span');
-  metadataItems.forEach(item => {
-    const txt = item.textContent || '';
-    const lower = txt.toLowerCase();
-    if (lower.includes('visualiza') || lower.includes('views') || lower.includes('view') || lower.includes('assistido') || lower.includes('assistida')) {
-      viewsText = txt;
-    } else if (lower.includes('há') || lower.includes('ago') || lower.includes('hora') || lower.includes('dia') || lower.includes('semana') || lower.includes('mês') || lower.includes('meses') || lower.includes('ano') || lower.includes('minute') || lower.includes('minuto')) {
-      ageText = txt;
-    }
+  video.querySelectorAll(METADATA_TEXT_SELECTOR).forEach(item => {
+    const txt = (item.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!ageText && isAgeText(txt)) ageText = txt;
+    else if (!viewsText && isViewsText(txt)) viewsText = txt;
   });
-  
   return { viewsText, ageText };
 }
 
@@ -263,7 +195,7 @@ function getVideoMetadata(video) {
 function updateChipUI(chip, active) {
   const button = chip.querySelector('button');
   const innerDiv = chip.querySelector('.ytChipShapeChip');
-  
+
   if (active) {
     chip.setAttribute('selected', '');
     chip.classList.add('iron-selected');
@@ -283,125 +215,111 @@ function updateChipUI(chip, active) {
   }
 }
 
-// Função para encontrar o container de chips (mesmo dentro de Shadow DOM)
+// Função para encontrar o container de chips da página ativa
 function findChipsContainer() {
-  const host = document.querySelector('ytd-feed-filter-chip-bar-renderer');
-  if (!host) return null;
-  
-  // Tentar encontrar no Shadow DOM do host primeiro
-  if (host.shadowRoot) {
-    const chips = host.shadowRoot.querySelector('#chips');
+  const hosts = document.querySelectorAll('ytd-feed-filter-chip-bar-renderer');
+  for (const host of hosts) {
+    if (!isInActivePage(host)) continue;
+    const chips = (host.shadowRoot && host.shadowRoot.querySelector('#chips')) || host.querySelector('#chips');
     if (chips) return chips;
   }
-  
-  // Se for Shady DOM ou não estiver no shadowRoot, buscar no light DOM do host
-  const chips = host.querySelector('#chips');
-  if (chips) return chips;
-  
   return null;
 }
 
 // Injetar CSS para garantir visual dos chips
 function injectStyles(targetRoot) {
   const styleId = 'yt-smart-filter-styles';
-  
+
   // Se o rootNode for o documento inteiro, anexar na head
   let target = targetRoot;
   if (targetRoot === document) {
     target = document.head || document.documentElement;
   }
-  
-  if (target.getElementById && target.getElementById(styleId)) return;
-  if (target.querySelector && target.querySelector('#' + styleId)) return;
-  
-  const style = document.createElement('style');
+
+  // Reaproveita o <style> existente, mas sempre reescreve o conteúdo (uma versão antiga pode ter deixado CSS velho)
+  const style = (target.querySelector && target.querySelector('#' + styleId)) || document.createElement('style');
   style.id = styleId;
   style.textContent = `
+    /* Chips no estilo nativo do YouTube, com ícone e estado ativo discreto */
     .yt-smart-filter-chip {
-      margin-right: 8px;
+      margin-right: 12px;
       display: inline-block;
       vertical-align: middle;
     }
-    
-    /* Configurações de cores baseadas no tema claro/escuro */
-    :host, :root {
-      --yt-most-viewed-inactive-bg: rgba(30, 144, 255, 0.15);
-      --yt-most-viewed-inactive-text: #63a4ff;
-      --yt-most-recent-inactive-bg: rgba(186, 104, 200, 0.15);
-      --yt-most-recent-inactive-text: #e1bee7;
-    }
-    
-    html:not([dark]) :host, html:not([dark]) :root, html:not([dark]) {
-      --yt-most-viewed-inactive-bg: rgba(0, 120, 255, 0.1) !important;
-      --yt-most-viewed-inactive-text: #0056b3 !important;
-      --yt-most-recent-inactive-bg: rgba(106, 27, 154, 0.1) !important;
-      --yt-most-recent-inactive-text: #6a1b9a !important;
-    }
-
-    /* Mais vistos - Inativo */
-    #chip-most-viewed .ytChipShapeChip.ytChipShapeInactive {
-      background-color: var(--yt-most-viewed-inactive-bg) !important;
-      color: var(--yt-most-viewed-inactive-text) !important;
-      border: 1px solid rgba(0, 120, 255, 0.25) !important;
-    }
-    /* Mais vistos - Ativo */
-    #chip-most-viewed .ytChipShapeChip.ytChipShapeActive {
-      background-color: #1e90ff !important;
-      color: #ffffff !important;
-      border: 1px solid #1e90ff !important;
-    }
-    
-    /* Mais recentes - Inativo */
-    #chip-most-recent .ytChipShapeChip.ytChipShapeInactive {
-      background-color: var(--yt-most-recent-inactive-bg) !important;
-      color: var(--yt-most-recent-inactive-text) !important;
-      border: 1px solid rgba(138, 43, 226, 0.25) !important;
-    }
-    /* Mais recentes - Ativo */
-    #chip-most-recent .ytChipShapeChip.ytChipShapeActive {
-      background-color: #8a2be2 !important;
-      color: #ffffff !important;
-      border: 1px solid #8a2be2 !important;
-    }
-
-    .yt-smart-filter-chip .ytChipShapeChip {
+    .yt-smart-filter-chip button {
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
       cursor: pointer;
-      border-radius: 8px;
-      padding: 0 12px;
-      height: 32px;
-      display: flex;
+    }
+    .yt-smart-filter-chip .ytChipShapeChip {
+      display: inline-flex;
       align-items: center;
-      justify-content: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px 0 10px;
+      border-radius: 8px;
+      font-family: "Roboto", "Arial", sans-serif;
       font-size: 1.4rem;
       font-weight: 500;
-      transition: background-color 0.5s cubic-bezier(0.05,0,0,1);
+      line-height: 2rem;
+      white-space: nowrap;
+      background-color: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05)) !important;
+      color: var(--yt-spec-text-primary, #0f0f0f) !important;
+      border: 0 !important;
+      transition: background-color .2s ease, color .2s ease;
     }
-    
-    /* Garantir que o texto interno herde a cor correta */
+    .yt-smart-filter-chip .ytChipShapeChip.ytChipShapeInactive:hover {
+      background-color: var(--yt-spec-button-chip-background-hover, rgba(0, 0, 0, 0.1)) !important;
+    }
+    .yt-smart-filter-chip .ytChipShapeChip.ytChipShapeActive {
+      background-color: var(--yt-spec-text-primary, #0f0f0f) !important;
+      color: var(--yt-spec-text-primary-inverse, #fff) !important;
+    }
+    .yt-smart-filter-chip button:focus-visible .ytChipShapeChip {
+      outline: 2px solid var(--yt-spec-call-to-action, #065fd4);
+      outline-offset: 2px;
+    }
+    .yt-smart-filter-chip .ytsf-icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      fill: none;
+      stroke: currentColor !important;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    /* Extensões de tema escuro (ex.: Dark Reader) pintam o fundo do texto */
     .yt-smart-filter-chip .ytChipShapeChip div {
       color: inherit !important;
+      background: transparent !important;
     }
   `;
   target.appendChild(style);
 }
 
+// Ícones dos chips (traço, herdam a cor do texto)
+const CHIP_ICONS = {
+  views: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  recent: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
+};
+
 // Criar elemento de chip
-function createChip(id, text, onClick) {
+function createChip(id, text, icon, onClick) {
   const chip = document.createElement('div');
   chip.className = 'style-scope ytd-feed-filter-chip-bar-renderer yt-smart-filter-chip yt-chip-cloud-chip-renderer';
   chip.id = id;
   chip.setAttribute('chip-style', 'STYLE_HOME_FILTER');
-  
+
   chip.innerHTML = `
     <div id="chip-shape-container" class="style-scope yt-chip-cloud-chip-renderer">
       <div class="ytChipShapeHost chip-shape">
-        <button class="ytChipShapeButtonReset" role="tab" aria-selected="false">
-          <div class="ytChipShapeChip ytChipShapeInactive ytChipShapeOnlyTextPadding">
+        <button class="ytChipShapeButtonReset" role="tab" aria-selected="false" title="Ordenar: ${text}">
+          <div class="ytChipShapeChip ytChipShapeInactive">
+            <svg class="ytsf-icon" viewBox="0 0 24 24" aria-hidden="true">${CHIP_ICONS[icon]}</svg>
             <div>${text}</div>
-            <yt-touch-feedback-shape aria-hidden="true" class="ytSpecTouchFeedbackShapeHost ytSpecTouchFeedbackShapeTouchResponse">
-              <div class="ytSpecTouchFeedbackShapeStroke" style="border-radius: 8px;"></div>
-              <div class="ytSpecTouchFeedbackShapeFill" style="border-radius: 8px;"></div>
-            </yt-touch-feedback-shape>
           </div>
         </button>
       </div>
@@ -412,50 +330,50 @@ function createChip(id, text, onClick) {
     e.stopPropagation();
     onClick(chip);
   });
-  
+
   return chip;
 }
 
 // Injetar os botões na página
 function injectFilterChips() {
-  if (!isExtensionEnabled) return;
-  
+  if (!isExtensionEnabled || !settingsLoaded) return;
+
   // Se os chips já estiverem conectados no DOM, não fazer nada
   if (areChipsConnected()) return;
-  
+
   const parent = findChipsContainer();
   if (!parent) return;
-  
+
+  // Remover restos de uma injeção anterior (ex.: YouTube re-renderizou só parte da barra)
+  injectedChips.forEach(chip => chip.remove());
+  parent.querySelectorAll('.yt-smart-filter-chip').forEach(chip => chip.remove());
+
   // Injetar estilos no root correspondente (documento ou shadow root)
-  const rootNode = parent.getRootNode();
-  injectStyles(rootNode);
-  
-  if (parent.querySelector('#chip-most-viewed')) return;
-  
-  console.log('[YT Smart Filter] Injetando chips de ordenação...');
-  
-  const mostViewed = createChip('chip-most-viewed', 'Mais vistos', (chip) => {
+  injectStyles(parent.getRootNode());
+
+  const mostViewed = createChip('chip-most-viewed', 'Mais vistos', 'views', (chip) => {
     sortMostViewedActive = !sortMostViewedActive;
     chrome.storage.sync.set({ sortMostViewedActive: sortMostViewedActive });
     updateChipUI(chip, sortMostViewedActive);
     applyFeedSorting();
   });
-  
-  const mostRecent = createChip('chip-most-recent', 'Mais recentes', (chip) => {
+
+  const mostRecent = createChip('chip-most-recent', 'Mais recentes', 'recent', (chip) => {
     sortMostRecentActive = !sortMostRecentActive;
     chrome.storage.sync.set({ sortMostRecentActive: sortMostRecentActive });
     updateChipUI(chip, sortMostRecentActive);
     applyFeedSorting();
   });
-  
-  parent.insertBefore(mostRecent, parent.firstChild);
-  parent.insertBefore(mostViewed, parent.firstChild);
-  
+
+  safeObserve(() => {
+    parent.insertBefore(mostRecent, parent.firstChild);
+    parent.insertBefore(mostViewed, parent.firstChild);
+  });
+
   updateChipUI(mostViewed, sortMostViewedActive);
   updateChipUI(mostRecent, sortMostRecentActive);
-  
+
   injectedChips = [mostViewed, mostRecent];
-  console.log('[YT Smart Filter] Chips de ordenação injetados com sucesso.');
 }
 
 // Função para temporariamente pausar o MutationObserver
@@ -465,75 +383,40 @@ function safeObserve(action) {
   }
   action();
   if (typeof observer !== 'undefined' && observer) {
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: false,
-      characterData: false
-    });
+    startObserver();
   }
+}
+
+// Colocar os cards nas posições ("slots") que os mesmos cards ocupavam, na nova ordem.
+// Mantém seções, prateleiras e o item de "carregar mais" do YouTube onde estavam.
+function placeInSlots(cardsInDomOrder, newOrder) {
+  safeObserve(() => {
+    const markers = cardsInDomOrder.map(card => {
+      const marker = document.createComment('ytsf-slot');
+      card.parentNode.insertBefore(marker, card);
+      return marker;
+    });
+    markers.forEach((marker, i) => {
+      marker.parentNode.insertBefore(newOrder[i], marker);
+      marker.remove();
+    });
+  });
+}
+
+// Cards carregados (com título e link) da página ativa, em ordem do DOM
+function getSortableCards() {
+  return Array.from(findVideoElements()).filter(video =>
+    video.parentNode && video.querySelector(TITLE_SELECTOR) && video.querySelector(LINK_SELECTOR)
+  );
 }
 
 // Restaurar ordem original do feed
 function restoreOriginalOrder() {
-  const videos = Array.from(findVideoElements());
-  const sorted = [...videos].filter(v => v.dataset.originalIndex !== undefined).sort((a, b) => {
-    return parseInt(a.dataset.originalIndex) - parseInt(b.dataset.originalIndex);
-  });
-  
-  if (sorted.length === 0) return;
-  
-  safeObserve(() => {
-    sorted.forEach(video => {
-      const parent = video._originalParent;
-      const sibling = video._originalNextSibling;
-      if (parent) {
-        if (sibling && sibling.parentNode === parent) {
-          parent.insertBefore(video, sibling);
-        } else {
-          parent.appendChild(video);
-        }
-      }
-    });
-  });
-}
-
-// Reordenar os elementos de vídeo no DOM
-function reorderVideos(sortedVideos) {
-  const parentMap = new Map();
-  sortedVideos.forEach(v => {
-    const parent = v._originalParent || v.parentElement;
-    if (parent) {
-      if (!parentMap.has(parent)) {
-        parentMap.set(parent, []);
-      }
-      parentMap.get(parent).push(v);
-    }
-  });
-  
-  const parents = Array.from(parentMap.keys());
-  parents.sort((a, b) => {
-    return a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
-  });
-  
-  safeObserve(() => {
-    let videoIndex = 0;
-    parents.forEach(parent => {
-      const originalChildrenCount = parentMap.get(parent).length;
-      for (let i = 0; i < originalChildrenCount && videoIndex < sortedVideos.length; i++) {
-        parent.appendChild(sortedVideos[videoIndex]);
-        videoIndex++;
-      }
-    });
-    
-    if (parents.length > 0 && videoIndex < sortedVideos.length) {
-      const lastParent = parents[parents.length - 1];
-      while (videoIndex < sortedVideos.length) {
-        lastParent.appendChild(sortedVideos[videoIndex]);
-        videoIndex++;
-      }
-    }
-  });
+  const cards = getSortableCards().filter(v => v.dataset.originalIndex !== undefined);
+  if (cards.length === 0) return;
+  const sorted = [...cards].sort((a, b) => parseInt(a.dataset.originalIndex) - parseInt(b.dataset.originalIndex));
+  if (sorted.every((card, i) => card === cards[i])) return;
+  placeInSlots(cards, sorted);
 }
 
 // Aplicar ordenação dos vídeos atuais
@@ -542,67 +425,58 @@ function applyFeedSorting() {
     restoreOriginalOrder();
     return;
   }
-  
-  const allVideos = Array.from(findVideoElements());
-  
-  // Filtrar apenas vídeos que já têm título/link (carregados) e não estão ocultos (display !== none)
-  const videos = allVideos.filter(video => {
-    const titleElement = video.querySelector('.yt-lockup-metadata-view-model-wiz__title, .ytLockupMetadataViewModelTitle, #video-title');
-    const linkElement = video.querySelector('a[href*="/watch?v="], a[href*="list="], a[href*="/playlist?"]');
-    return titleElement && linkElement && video.style.display !== 'none';
-  });
-  
-  if (videos.length === 0) return;
-  
-  videos.forEach((video, index) => {
+
+  const cards = getSortableCards();
+  if (cards.length === 0) return;
+
+  // Registrar a posição original dos cards novos (os já registrados mantêm a sua)
+  cards.forEach(video => {
     if (video.dataset.originalIndex === undefined) {
-      video.dataset.originalIndex = index.toString();
-      video._originalParent = video.parentElement;
-      video._originalNextSibling = video.nextSibling;
+      video.dataset.originalIndex = (nextOriginalIndex++).toString();
     }
   });
-  
-  const videoData = videos.map(video => {
+
+  const videoData = cards.map(video => {
     const { viewsText, ageText } = getVideoMetadata(video);
-    const views = parseViews(viewsText);
-    const ageMinutes = parseAgeToMinutes(ageText);
     return {
       element: video,
-      views,
-      ageMinutes,
+      views: parseViews(viewsText),
+      ageMinutes: parseAgeToMinutes(ageText),
       originalIndex: parseInt(video.dataset.originalIndex)
     };
   });
-  
+
+  // Com os dois ativos: a metade mais vista da página vem primeiro; cada metade do mais novo ao mais antigo
+  if (sortMostViewedActive && sortMostRecentActive) {
+    const byViews = [...videoData].sort((a, b) => b.views - a.views);
+    byViews.forEach((d, i) => { d.topViewed = i < Math.ceil(byViews.length / 2); });
+  }
+
   videoData.sort((a, b) => {
     if (sortMostViewedActive && sortMostRecentActive) {
-      const ageHoursA = a.ageMinutes / 60;
-      const ageHoursB = b.ageMinutes / 60;
-      const scoreA = a.views / (ageHoursA + 2);
-      const scoreB = b.views / (ageHoursB + 2);
-      if (scoreA !== scoreB) {
-        return scoreB - scoreA;
-      }
+      if (a.topViewed !== b.topViewed) return a.topViewed ? -1 : 1;
     } else if (sortMostViewedActive) {
-      if (a.views !== b.views) {
-        return b.views - a.views;
-      }
-    } else if (sortMostRecentActive) {
+      if (a.views !== b.views) return b.views - a.views;
+    }
+    if (sortMostRecentActive) {
       if (a.ageMinutes !== b.ageMinutes) {
+        if (a.ageMinutes === Infinity) return 1;
+        if (b.ageMinutes === Infinity) return -1;
         return a.ageMinutes - b.ageMinutes;
       }
     }
     return a.originalIndex - b.originalIndex;
   });
-  
-  const sortedElements = videoData.map(d => d.element);
-  reorderVideos(sortedElements);
+
+  const sorted = videoData.map(d => d.element);
+  if (sorted.every((card, i) => card === cards[i])) return;
+  placeInSlots(cards, sorted);
 }
 
 // Função para atualizar o badge do ícone
 function updateBadge() {
   if (!checkExtensionContext()) return;
-  
+
   const currentCount = hiddenVideos.size;
   // Só atualiza se houver mudança real no número de vídeos
   if (currentCount !== lastHiddenCount) {
@@ -622,7 +496,7 @@ function updateBadge() {
 // Função para salvar vídeos ocultos
 function saveHiddenVideos() {
   if (!checkExtensionContext()) return;
-  
+
   const videosArray = Array.from(hiddenVideos.values());
   chrome.storage.local.set({ hiddenVideos: videosArray }, function() {
     if (!checkExtensionContext()) return;
@@ -630,32 +504,18 @@ function saveHiddenVideos() {
   });
 }
 
-// Função para carregar a thumbnail
-function loadThumbnail(videoId) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img.src);
-    img.onerror = () => resolve(`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`);
-    img.src = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-  });
-}
-
 // Função para obter identificador único do canal
 function getChannelIdentifier(video) {
-  // Estratégia 1: Buscar links com /@ ou /channel/ ou /user/
-  const channelLink = video.querySelector('a[href*="/@"], a[href*="/channel/"], a[href*="/user/"]');
+  const channelLink = video.querySelector('a[href^="/@"], a[href*="/channel/"], a[href*="/user/"]');
   if (channelLink) {
     const href = channelLink.getAttribute('href') || '';
     const match = href.match(/\/(@[^\/?#]+)/) || href.match(/\/channel\/([^\/?#]+)/) || href.match(/\/user\/([^\/?#]+)/);
-    if (match) {
-      return match[1].toLowerCase();
-    }
-    return href.split('?')[0].toLowerCase();
+    return (match ? match[1] : href.split('?')[0]).toLowerCase();
   }
-  
-  // Estratégia 2: Fallback para ytd-channel-name ou similar
-  const channelNameEl = video.querySelector('ytd-channel-name, [class*="channel-name"]');
-  if (channelNameEl && channelNameEl.textContent) {
+
+  // Sidebar do /watch: nome do canal é texto, não link
+  const channelNameEl = video.querySelector('ytd-channel-name #text, .ytContentMetadataViewModelMetadataRow span.ytAttributedStringHost');
+  if (channelNameEl && channelNameEl.textContent.trim()) {
     return channelNameEl.textContent.trim().toLowerCase();
   }
 
@@ -670,346 +530,176 @@ function isPlaylistElement(video) {
     'yt-collection-thumbnail-view-model',
     '.ytCollectionThumbnailViewModelHost',
     '.ytLockupViewModelCollectionStack2',
-    'ytd-playlist-thumbnail',
-    '[class*="playlist-thumbnail"]'
+    'ytd-playlist-thumbnail'
   ];
-  for (const selector of playlistSelectors) {
-    if (video.querySelector(selector)) {
-      return true;
-    }
-  }
-  
-  const links = video.querySelectorAll('a');
-  for (const link of links) {
-    const href = link.getAttribute('href') || '';
-    if (href.includes('list=') || href.includes('/playlist?')) {
-      return true;
-    }
-  }
-  
-  return false;
+  if (video.querySelector(playlistSelectors.join(', '))) return true;
+
+  const link = video.querySelector('a.ytLockupViewModelContentImage, a#thumbnail, ' + LINK_SELECTOR);
+  const href = link ? link.getAttribute('href') || '' : '';
+  return href.includes('list=') || href.includes('/playlist?');
 }
 
-// Função para processar um vídeo
-async function processVideo(video, currentChannelCounts) {
-  if (!checkExtensionContext()) return;
+// Página do SPA que está visível (o YouTube mantém a home oculta no DOM enquanto se assiste um vídeo)
+function isInActivePage(el) {
+  const page = el.closest('ytd-browse, ytd-watch-flexy, ytd-search');
+  return !page || !page.hasAttribute('hidden');
+}
 
-  // Múltiplas estratégias para encontrar o título e link
-  let titleElement = video.querySelector('.yt-lockup-metadata-view-model-wiz__title, .ytLockupMetadataViewModelTitle, #video-title');
-  let linkElement = video.querySelector('a[href*="/watch?v="], a[href*="list="], a[href*="/playlist?"]');
-  
-  // Fallback para outras estruturas
-  if (!titleElement) {
-    titleElement = video.querySelector('[class*="title" i], [class*="heading" i], h3, h4');
-  }
-  
-  if (!linkElement) {
-    linkElement = video.querySelector('a[href*="/watch?v="]');
-  }
-  
-  if (!linkElement) {
-    linkElement = video.querySelector('a[href*="list="], a[href*="/playlist?"]');
-  }
-  
-  if (titleElement && linkElement) {
-    // Buscar o elemento correto de idade - múltiplas estratégias
-    let ageText = '';
-    
-    // Estratégia 1: Metadados padrão
-    let metadataItems = video.querySelectorAll('.yt-content-metadata-view-model-wiz__metadata-text');
-    
-    // Estratégia 2: Fallback para outras estruturas
-    if (metadataItems.length === 0) {
-      metadataItems = video.querySelectorAll('[class*="metadata" i], [class*="info" i], span, div');
-    }
-    
-    metadataItems.forEach(item => {
-      const txt = item.textContent.toLowerCase();
-      if (txt.includes('ano') || txt.includes('mês') || txt.includes('meses') || txt.includes('semana') || txt.includes('semanas') || txt.includes('dia') || txt.includes('dias') || txt.includes('hora') || txt.includes('horas')) {
-        ageText = item.textContent;
-      }
-    });
-    
-    const title = titleElement.textContent || titleElement.innerText || '';
-    const url = linkElement.href;
-    let videoId = getVideoId(url);
-    if (!videoId && url.includes('list=')) {
-      const urlObj = new URL(url);
-      videoId = urlObj.searchParams.get('list') || urlObj.searchParams.get('v');
-    }
-    if (!videoId) {
-      videoId = btoa(url).replace(/[^a-zA-Z0-9]/g, '');
-    }
+// Função para encontrar os cards de vídeo da página ativa
+function findVideoElements() {
+  return Array.from(document.querySelectorAll(CARD_SELECTOR)).filter(el =>
+    isInActivePage(el) && !el.querySelector('ytd-ad-slot-renderer') && !el.closest('ytd-ad-slot-renderer')
+  );
+}
 
-    // Verificar se o vídeo tem barra de progresso (assistido) - múltiplas estratégias
-    let isWatched = false;
-    if (hideWatched) {
-      // Múltiplos seletores para vídeos assistidos
-      const watchedSelectors = [
-        '.ytThumbnailOverlayProgressBarHostWatchedProgressBar',
-        '[class*="progress"]',
-        '[class*="watched"]',
-        '[class*="resume"]'
-      ];
-      
-      for (const selector of watchedSelectors) {
-        if (video.querySelector(selector)) {
-          isWatched = true;
-          break;
-        }
-      }
+// Extrair os dados de um card; null se ainda não carregou
+function getCardInfo(video) {
+  const titleElement = video.querySelector(TITLE_SELECTOR);
+  const linkElement = video.querySelector(LINK_SELECTOR);
+  if (!titleElement || !linkElement) return null;
+
+  const url = linkElement.href;
+  let videoId = getVideoId(url);
+  if (!videoId) {
+    try {
+      videoId = new URL(url).searchParams.get('list');
+    } catch (e) {}
+  }
+
+  const { viewsText, ageText } = getVideoMetadata(video);
+  return {
+    videoId: videoId || url,
+    title: (titleElement.textContent || '').trim(),
+    url,
+    ageText,
+    views: parseViews(viewsText),
+    channel: getChannelIdentifier(video)
+  };
+}
+
+// Função para ocultar vídeos.
+// Recalcula tudo a cada execução: o YouTube reaproveita os elementos dos cards com outro conteúdo,
+// então nenhuma decisão anterior pode ficar "grudada" no elemento.
+function hideVideos() {
+  if (!checkExtensionContext() || !isExtensionEnabled || !settingsLoaded) return;
+
+  applyAdvancedDiscoveryVisibility();
+  injectFilterChips();
+
+  const previousCount = hiddenVideos.size;
+  const cards = [];
+
+  findVideoElements().forEach(video => {
+    const info = getCardInfo(video);
+    if (!info) {
+      setHidden(video, false);
+      return;
     }
 
     let reason = '';
-    if (shouldHideVideo(title, ageText)) {
-      if (maxVideoAge > 0 && getVideoAge(ageText) >= maxVideoAge) {
-        reason = 'date';
-      } else {
-        reason = 'keyword';
-      }
-    } else if (isWatched) {
+    if (hasKeyword(info.title)) {
+      reason = 'keyword';
+    } else if (maxVideoAge > 0 && getVideoAge(info.ageText) >= maxVideoAge) {
+      reason = 'date';
+    } else if (hideWatched && video.querySelector(WATCHED_SELECTOR)) {
       reason = 'watched';
     } else if (hidePlaylists && isPlaylistElement(video)) {
       reason = 'playlist';
-    } else if (channelLimit > 0 && video.dataset.hiddenByChannelLimit === 'true') {
-      reason = 'channelLimit';
     }
-
-    if (reason) {
-      // Verifica se o vídeo já está na lista
-      if (!hiddenVideos.has(videoId)) {
-        // Carregar thumbnail antes de ocultar
-        const thumbnailUrl = await loadThumbnail(videoId);
-        if (!checkExtensionContext()) return;
-        // Adicionar à lista de vídeos ocultos usando o ID como chave
-        hiddenVideos.set(videoId, {
-          title: title,
-          url: url,
-          thumbnail: thumbnailUrl,
-          timestamp: new Date().toISOString(),
-          age: ageText,
-          reason: reason
-        });
-      }
-      video.style.display = 'none';
-    } else {
-      video.style.display = '';
-    }
-  }
-}
-
-// Função para encontrar vídeos usando múltiplas estratégias
-function findVideoElements() {
-  // Estratégia 1: Seletores principais
-  let elements = document.querySelectorAll('ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-video-renderer');
-  
-  // Estratégia 2: Se não encontrar nada, tentar seletores mais genéricos
-  if (elements.length === 0) {
-    elements = document.querySelectorAll('[class*="ytd-rich-item-renderer"], [class*="ytd-compact-video-renderer"], [class*="ytd-video-renderer"]');
-  }
-  
-  // Estratégia 3: Buscar por elementos que contenham thumbnails do YT
-  if (elements.length === 0) {
-    elements = document.querySelectorAll('a[href*="/watch?v="]');
-    // Filtrar apenas elementos que parecem ser vídeos
-    elements = Array.from(elements).filter(el => {
-      const parent = el.closest('[class*="renderer"]') || el.closest('[class*="item"]');
-      return parent && parent.querySelector('img[src*="i.ytimg.com"]');
-    });
-  }
-  
-  return elements;
-}
-
-// Função para ocultar vídeos
-async function hideVideos() {
-  if (!checkExtensionContext() || !isExtensionEnabled) return;
-  
-  // Aplicar visibilidade da seção de descoberta avançada
-  applyAdvancedDiscoveryVisibility();
-  
-  // Tentar injetar os chips de ordenação
-  injectFilterChips();
-  
-  const videoElements = findVideoElements();
-  const previousCount = hiddenVideos.size;
-  
-  // Log para debug
-  console.log(`[YT Smart Filter] Encontrados ${videoElements.length} vídeos para processar`);
-  
-  // --- Lógica de duplicatas ---
-  // Mapear video ID -> lista de elementos (para identificar repetidos)
-  const videoIdToElements = new Map();
-  videoElements.forEach(video => {
-    const linkElement = video.querySelector('a[href*="/watch?v="]');
-    if (!linkElement) return;
-    const vid = getVideoId(linkElement.href);
-    if (!vid) return;
-    if (!videoIdToElements.has(vid)) videoIdToElements.set(vid, []);
-    videoIdToElements.get(vid).push(video);
+    cards.push({ video, info, reason });
   });
-  
-  // Pré-ocultar duplicatas (manter apenas o primeiro de cada ID)
+
+  // Duplicatas: manter apenas o primeiro card visível de cada vídeo
   if (hideDuplicates) {
-    videoIdToElements.forEach((elements, vid) => {
-      if (elements.length > 1) {
-        // Manter o primeiro visível; ocultar os demais
-        for (let i = 1; i < elements.length; i++) {
-          elements[i].style.display = 'none';
-          elements[i].dataset.hiddenByDuplicate = 'true';
-        }
-      }
-    });
-  } else {
-    // Se a opção foi desligada, restaurar elementos marcados como duplicatas
-    videoElements.forEach(video => {
-      if (video.dataset.hiddenByDuplicate) {
-        video.style.display = '';
-        delete video.dataset.hiddenByDuplicate;
-      }
+    const seen = new Set();
+    cards.forEach(card => {
+      if (card.reason) return;
+      if (seen.has(card.info.videoId)) card.reason = 'duplicate';
+      seen.add(card.info.videoId);
     });
   }
-  
-  // --- Lógica de limite por canal com prioridade para vídeos com menos views ---
-  // Coletar metadados de todos os vídeos por canal antes de processar
-  const channelVideoData = new Map(); // channelId -> [{video, views}]
+
+  // Limite por canal: entre os que sobraram, manter os N mais vistos de cada canal
   if (channelLimit > 0) {
-    videoElements.forEach(video => {
-      // Pular duplicatas já ocultadas
-      if (video.dataset.hiddenByDuplicate) return;
-      const channelId = getChannelIdentifier(video);
-      if (!channelId) return;
-      const { viewsText } = getVideoMetadata(video);
-      const views = parseViews(viewsText);
-      if (!channelVideoData.has(channelId)) channelVideoData.set(channelId, []);
-      channelVideoData.get(channelId).push({ video, views });
+    const byChannel = new Map();
+    cards.forEach(card => {
+      if (card.reason || !card.info.channel) return;
+      if (!byChannel.has(card.info.channel)) byChannel.set(card.info.channel, []);
+      byChannel.get(card.info.channel).push(card);
     });
-    
-    // Para cada canal com mais vídeos que o limite, ocultar os de MENOS views
-    channelVideoData.forEach((items, channelId) => {
+    byChannel.forEach(items => {
       if (items.length <= channelLimit) return;
-      // Ordenar: maior views primeiro
-      items.sort((a, b) => b.views - a.views);
-      // Ocultar os excedentes (menor views)
-      for (let i = channelLimit; i < items.length; i++) {
-        items[i].video.dataset.hiddenByChannelLimit = 'true';
-      }
-    });
-  } else {
-    // Se limite desativado, limpar marcações anteriores
-    videoElements.forEach(video => {
-      delete video.dataset.hiddenByChannelLimit;
+      items.sort((a, b) => b.info.views - a.info.views);
+      items.slice(channelLimit).forEach(card => { card.reason = 'channelLimit'; });
     });
   }
-  
-  // Processar todos os vídeos sequencialmente (exceto duplicatas já tratadas)
-  const currentChannelCounts = new Map();
-  for (const video of videoElements) {
-    if (video.dataset.hiddenByDuplicate) continue; // já oculto
-    await processVideo(video, currentChannelCounts);
-  }
-  
-  // Re-aplicar ordenação se estiver ativa
+
+  cards.forEach(({ video, info, reason }) => {
+    setHidden(video, !!reason);
+    // Duplicatas não entram nas estatísticas (o vídeo continua visível em outro card)
+    if (reason && reason !== 'duplicate' && !hiddenVideos.has(info.videoId)) {
+      hiddenVideos.set(info.videoId, {
+        title: info.title,
+        url: info.url,
+        thumbnail: getVideoId(info.url) ? `https://i.ytimg.com/vi/${getVideoId(info.url)}/hqdefault.jpg` : '',
+        timestamp: new Date().toISOString(),
+        age: info.ageText,
+        reason: reason
+      });
+    }
+  });
+
   if (sortMostViewedActive || sortMostRecentActive) {
     applyFeedSorting();
   }
-  
-  // Só salva se houver mudança real na lista
+
   if (hiddenVideos.size !== previousCount) {
-    console.log(`[YT Smart Filter] Ocultados ${hiddenVideos.size} vídeos (${hiddenVideos.size - previousCount} novos)`);
     saveHiddenVideos();
   }
 }
 
-// Observador para detectar mudanças na página - melhorado
+// Throttle: o YouTube gera mutações o tempo todo; roda no máximo a cada 150ms
+let hideVideosTimeout = null;
+function scheduleHideVideos() {
+  if (hideVideosTimeout) return;
+  hideVideosTimeout = setTimeout(() => {
+    hideVideosTimeout = null;
+    hideVideos();
+  }, 150);
+}
+
+// Observador: qualquer mudança dentro de um card (inclusive reaproveitamento com outro vídeo) ou novos cards
+const RELEVANT_SELECTOR = CARD_SELECTOR + ', yt-lockup-view-model, ytd-feed-filter-chip-bar-renderer, ytd-chips-shelf-with-video-shelf-renderer';
 let observer = new MutationObserver(function(mutations) {
   if (!checkExtensionContext()) {
     observer.disconnect();
     return;
   }
-  
-  // Garantir que os chips estão lá se o container de chips existir
-  if (!areChipsConnected()) {
-    injectFilterChips();
-  }
-  
-  // Verificar se há mudanças relevantes
-  let hasRelevantChanges = false;
-  mutations.forEach(mutation => {
-    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-      // Verificar se algum dos nós adicionados parece ser um vídeo
-      mutation.addedNodes.forEach(node => {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          if (node.matches && (node.matches('ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-video-renderer') || 
-              node.querySelector('ytd-rich-item-renderer, ytd-compact-video-renderer, ytd-video-renderer'))) {
-            hasRelevantChanges = true;
-          }
-        }
-      });
-    }
+  if (!isExtensionEnabled) return;
+
+  const relevant = mutations.some(mutation => {
+    const target = mutation.target;
+    if (target.nodeType === Node.ELEMENT_NODE && target.closest(RELEVANT_SELECTOR)) return true;
+    return Array.from(mutation.addedNodes).some(node =>
+      node.nodeType === Node.ELEMENT_NODE && (node.matches(RELEVANT_SELECTOR) || node.querySelector(RELEVANT_SELECTOR))
+    );
   });
-  
-  if (hasRelevantChanges) {
-    console.log('[YT Smart Filter] Mudanças detectadas na página, processando vídeos...');
-    // Usar debounce para evitar múltiplas execuções
-    clearTimeout(window.hideVideosTimeout);
-    window.hideVideosTimeout = setTimeout(hideVideos, 100);
-  }
+
+  if (relevant) scheduleHideVideos();
 });
 
-// Iniciar observador com configuração mais específica
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-  attributes: false,
-  characterData: false
-});
-
-// Função para inicializar a extensão
-function initializeExtension() {
-  console.log('[YT Smart Filter] Inicializando extensão...');
-  
-  // Verificar estado inicial da extensão
-  checkExtensionEnabled();
-  
-  // Aguardar um pouco para a página carregar completamente
-  setTimeout(() => {
-    if (document.readyState === 'complete') {
-      if (isExtensionEnabled) {
-        loadSettings();
-        hideVideos();
-      }
-    } else {
-      window.addEventListener('load', () => {
-        if (isExtensionEnabled) {
-          loadSettings();
-          hideVideos();
-        }
-      });
-    }
-  }, 1000);
-  
-  // Também executar quando a URL mudar (navegação SPA)
-  let currentUrl = window.location.href;
-  setInterval(() => {
-    if (window.location.href !== currentUrl) {
-      currentUrl = window.location.href;
-      console.log('[YT Smart Filter] URL mudou, reprocessando...');
-      if (isExtensionEnabled) {
-        setTimeout(hideVideos, 500);
-      }
-    }
-  }, 1000);
+function startObserver() {
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// Carregar palavras-chave iniciais
-loadKeywords();
+startObserver();
 
-// Carregar configurações iniciais
+// Carregar configurações e processar
 loadSettings();
 
-// Inicializar extensão
-initializeExtension();
+// Navegação SPA: reprocessar quando a página ativa muda
+document.addEventListener('yt-navigate-finish', scheduleHideVideos);
+document.addEventListener('yt-page-data-updated', scheduleHideVideos);
 
 // Listener para atualização de palavras-chave e mudança de estado
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {

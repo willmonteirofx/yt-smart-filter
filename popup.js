@@ -128,6 +128,13 @@ document.addEventListener('DOMContentLoaded', function() {
       hideAdvancedDiscovery: hideAdvancedDiscovery,
       hideDuplicates: hideDuplicates
     }, function() {
+      saveButton.textContent = 'Salvo ✓';
+      saveButton.classList.add('saved');
+      setTimeout(() => {
+        saveButton.textContent = 'Salvar';
+        saveButton.classList.remove('saved');
+      }, 1200);
+
       // Notificar a página do YT para atualizar
       chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
         if (tabs[0]) {
